@@ -27,20 +27,50 @@ You are reviewing a pull request that changes application code (services, librar
 
 ## Output format
 
-Post a single review comment structured as follows:
+Post your feedback as a **proper GitHub pull request review** — inline comments anchored on specific lines plus a summary body — **not** as a single top-level comment in the PR conversation. The workflow runs with `gh` pre-authenticated; use it to submit the review.
 
-### Summary
-One to three sentences: what this PR does, whether it matches declared intent, and your overall verdict (approve / request changes / comment).
-
-### Findings
-Group by severity. Skip empty sections.
+### Severity labels (use these verbatim as comment prefixes)
 
 - **Blocker** — must be fixed before merge (correctness, security, data loss, breaking API).
 - **Major** — should be fixed before merge (significant quality or maintainability issue).
 - **Minor** — worth addressing but not blocking (small bugs, missing tests for edge cases).
 - **Nit** — subjective polish (naming, comments, minor refactors).
 
-For each finding, include: `path/to/file.ext:LINE` — short title — explanation and suggested direction.
+### Submission procedure
 
-### Questions for the author
-Only if there is genuine ambiguity that prevents a confident review. Otherwise omit this section.
+1. Write the review payload to `/tmp/claude-review.json`:
+
+   ```json
+   {
+     "event": "REQUEST_CHANGES",
+     "body": "<executive summary: 1–3 sentences on what this PR does, whether it matches declared intent, and the overall verdict. Include any cross-cutting concerns that cannot be anchored to a single line.>",
+     "comments": [
+       {
+         "path": "path/to/file.ext",
+         "line": 42,
+         "side": "RIGHT",
+         "body": "**Blocker** — short title\n\nExplanation and suggested direction."
+       }
+     ]
+   }
+   ```
+
+2. Submit the review:
+
+   ```bash
+   PR_NUMBER=$(gh pr view --json number -q .number)
+   gh api \
+     --method POST \
+     -H "Accept: application/vnd.github+json" \
+     "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER/reviews" \
+     --input /tmp/claude-review.json
+   ```
+
+### Rules
+
+- **`event`**: `REQUEST_CHANGES` if the review contains at least one **Blocker**, otherwise `COMMENT`. **Never** submit `APPROVE` automatically — approval is a human decision.
+- **`comments[].line`**: must be a line that is part of the diff (added or modified lines on the `RIGHT` side, or deleted lines on the `LEFT` side). GitHub rejects inline comments anchored to unchanged context lines and **the entire review submission fails** if any comment is invalid. Verify each line against `git diff` output before submitting.
+- **Findings that span a whole file** (e.g. "missing `versions.tf`", "file should be deleted"): anchor the comment to the first changed line of a related file in the diff and explain the cross-file scope in the body, or put it in the review `body` if no representative line exists.
+- **Findings about the PR as a whole** (title/description mismatch, overall architecture concern, missing tests across multiple files): put them in the review `body`, not as orphan inline comments.
+- **Questions for the author**: include them in the review `body` under a `### Questions` subheading. Only ask when genuine ambiguity prevents a confident review.
+- **Clean diff, no findings**: still submit a review with `event: "COMMENT"`, empty `comments[]`, and a short `body` confirming the review ran and nothing material was found.
