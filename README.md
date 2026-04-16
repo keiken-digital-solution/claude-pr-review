@@ -25,6 +25,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
+
 jobs:
   review:
     uses: YOUR-ORG/claude-pr-review/.github/workflows/review.yml@v1
@@ -36,6 +42,8 @@ jobs:
       # OR, if you use Claude subscription auth:
       # CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
+
+> **Why these permissions?** `anthropics/claude-code-action` uses OIDC (`id-token: write`) to authenticate, posts review comments (`pull-requests: write`), reads PR metadata (`issues: read`), and checks out the repo (`contents: read`). GitHub permissions are intersected between caller and reusable workflow — omitting any of these in the caller will cause the job to fail at startup or during OIDC token fetch.
 
 Add **one** of the following secrets in the consumer repository's Settings → Secrets and variables → Actions:
 
@@ -143,6 +151,12 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
+
 jobs:
   review:
     uses: YOUR-ORG/claude-pr-review/.github/workflows/review.yml@v1
@@ -166,6 +180,12 @@ name: Claude Review
 on:
   pull_request:
     types: [opened, synchronize, reopened, labeled, unlabeled]
+
+permissions:
+  contents: read
+  pull-requests: write
+  issues: read
+  id-token: write
 
 jobs:
   review:
@@ -210,6 +230,8 @@ When a PR triggers the workflow, the Claude action automatically:
 No extra setup needed on the consumer side; this is native behavior of `anthropics/claude-code-action`.
 
 ## Troubleshooting
+
+**`Could not fetch an OIDC token. Did you remember to add id-token: write to your workflow permissions?`** — the caller workflow is missing `id-token: write`. Permissions for reusable workflows are **intersected** with the caller's — if the caller omits a permission, the reusable workflow cannot have it. Add the full permissions block shown in Quick start to your caller workflow.
 
 **No authentication provided** — add either `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` under Settings → Secrets and variables → Actions in the consumer repository, and reference it in the `secrets:` block of the caller workflow.
 
