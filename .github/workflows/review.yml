@@ -79,6 +79,7 @@ jobs:
       contents: read
       pull-requests: write
       issues: read
+      id-token: write
     steps:
       - name: Checkout caller repository
         uses: actions/checkout@v4
