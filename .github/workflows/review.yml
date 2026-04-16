@@ -1,0 +1,216 @@
+name: Claude PR Review
+
+on:
+  workflow_call:
+    inputs:
+      prompt-type:
+        description: "Base prompt to use. Values: 'codebase-review' or 'infra-review'. Ignored if custom-prompt-path is set."
+        required: false
+        type: string
+        default: ""
+      custom-prompt-path:
+        description: "Path in the caller repository to a prompt file that REPLACES the base prompt."
+        required: false
+        type: string
+        default: ""
+      append-prompt:
+        description: "Text APPENDED to the end of the prompt (base or custom)."
+        required: false
+        type: string
+        default: ""
+      claude-model:
+        description: "Default Claude model used for reviews."
+        required: false
+        type: string
+        default: "claude-sonnet-4-5"
+      deep-model:
+        description: "Model used when deep-triggers match a changed path or when the deep-label is present."
+        required: false
+        type: string
+        default: "claude-opus-4-6"
+      quick-model:
+        description: "Model used when the quick-label is present."
+        required: false
+        type: string
+        default: "claude-haiku-4-5"
+      deep-triggers:
+        description: "Comma-separated extended-regex patterns. If any changed file path matches, the review escalates to deep-model."
+        required: false
+        type: string
+        default: ""
+      deep-label:
+        description: "PR label name that forces deep-model."
+        required: false
+        type: string
+        default: "deep-review"
+      quick-label:
+        description: "PR label name that forces quick-model."
+        required: false
+        type: string
+        default: "quick-review"
+      shared-repo:
+        description: "owner/repo that hosts the base prompts (this repository by default)."
+        required: false
+        type: string
+        default: "keiken-digital-solution/claude-pr-review"
+      shared-repo-ref:
+        description: "Git ref (branch, tag, or SHA) of the shared prompts repo."
+        required: false
+        type: string
+        default: "main"
+    secrets:
+      ANTHROPIC_API_KEY:
+        required: true
+
+concurrency:
+  group: claude-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    name: Review with Claude
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+    steps:
+      - name: Checkout caller repository
+        uses: actions/checkout@v4
+        timeout-minutes: 2
+        with:
+          fetch-depth: 0
+
+      - name: Checkout shared prompts repository
+        if: inputs.custom-prompt-path == ''
+        uses: actions/checkout@v4
+        timeout-minutes: 2
+        with:
+          repository: ${{ inputs.shared-repo }}
+          ref: ${{ inputs.shared-repo-ref }}
+          path: .claude-pr-review-shared
+
+      - name: Validate inputs
+        env:
+          PROMPT_TYPE: ${{ inputs.prompt-type }}
+          CUSTOM_PATH: ${{ inputs.custom-prompt-path }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$PROMPT_TYPE" ] && [ -z "$CUSTOM_PATH" ]; then
+            echo "::error::Provide either 'prompt-type' (codebase-review | infra-review) or 'custom-prompt-path'."
+            exit 1
+          fi
+
+          if [ -n "$CUSTOM_PATH" ] && [ ! -f "$CUSTOM_PATH" ]; then
+            echo "::error::custom-prompt-path '$CUSTOM_PATH' was not found in the caller repository."
+            exit 1
+          fi
+
+          if [ -z "$CUSTOM_PATH" ] && [ "$PROMPT_TYPE" != "codebase-review" ] && [ "$PROMPT_TYPE" != "infra-review" ]; then
+            echo "::error::prompt-type must be 'codebase-review' or 'infra-review' (got '$PROMPT_TYPE')."
+            exit 1
+          fi
+
+      - name: Resolve review model
+        id: model
+        env:
+          DEFAULT_MODEL: ${{ inputs.claude-model }}
+          DEEP_MODEL: ${{ inputs.deep-model }}
+          QUICK_MODEL: ${{ inputs.quick-model }}
+          DEEP_TRIGGERS: ${{ inputs.deep-triggers }}
+          DEEP_LABEL: ${{ inputs.deep-label }}
+          QUICK_LABEL: ${{ inputs.quick-label }}
+          PR_LABELS_JSON: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # Tier 1: deep-triggers (path regex force deep-model)
+          if [ -n "$DEEP_TRIGGERS" ]; then
+            changed_files=$(git diff --name-only "${BASE_SHA}...${HEAD_SHA}" || true)
+            IFS=',' read -ra PATTERNS <<< "$DEEP_TRIGGERS"
+            for raw in "${PATTERNS[@]}"; do
+              pattern=$(echo "$raw" | awk '{$1=$1};1')
+              [ -z "$pattern" ] && continue
+              if printf '%s\n' "$changed_files" | grep -E -q -- "$pattern"; then
+                echo "model=$DEEP_MODEL" >> "$GITHUB_OUTPUT"
+                echo "reason=deep-trigger matched '$pattern'" >> "$GITHUB_OUTPUT"
+                echo "Matched deep-trigger pattern '$pattern' — using $DEEP_MODEL"
+                exit 0
+              fi
+            done
+          fi
+
+          # Tier 2: deep-label
+          if printf '%s' "$PR_LABELS_JSON" | grep -F -q "\"$DEEP_LABEL\""; then
+            echo "model=$DEEP_MODEL" >> "$GITHUB_OUTPUT"
+            echo "reason=deep-label '$DEEP_LABEL' set" >> "$GITHUB_OUTPUT"
+            echo "Label '$DEEP_LABEL' present — using $DEEP_MODEL"
+            exit 0
+          fi
+
+          # Tier 3: quick-label
+          if printf '%s' "$PR_LABELS_JSON" | grep -F -q "\"$QUICK_LABEL\""; then
+            echo "model=$QUICK_MODEL" >> "$GITHUB_OUTPUT"
+            echo "reason=quick-label '$QUICK_LABEL' set" >> "$GITHUB_OUTPUT"
+            echo "Label '$QUICK_LABEL' present — using $QUICK_MODEL"
+            exit 0
+          fi
+
+          # Tier 4: default
+          echo "model=$DEFAULT_MODEL" >> "$GITHUB_OUTPUT"
+          echo "reason=default" >> "$GITHUB_OUTPUT"
+          echo "No overrides — using default $DEFAULT_MODEL"
+
+      - name: Build final prompt
+        id: prompt
+        env:
+          PROMPT_TYPE: ${{ inputs.prompt-type }}
+          CUSTOM_PATH: ${{ inputs.custom-prompt-path }}
+          APPEND: ${{ inputs.append-prompt }}
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_AUTHOR: ${{ github.event.pull_request.user.login }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          MODEL_REASON: ${{ steps.model.outputs.reason }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$CUSTOM_PATH" ]; then
+            base_file="$CUSTOM_PATH"
+          else
+            base_file=".claude-pr-review-shared/prompts/${PROMPT_TYPE}.md"
+          fi
+
+          out=".claude-review-prompt.md"
+          cp "$base_file" "$out"
+
+          {
+            printf '\n\n---\n\n## Author-declared intent\n\n'
+            printf '**PR #%s by @%s**\n\n' "$PR_NUMBER" "$PR_AUTHOR"
+            printf '**Title:** %s\n\n' "$PR_TITLE"
+            printf '**Description:**\n\n%s\n' "${PR_BODY:-_(no description provided)_}"
+            printf '\n_Model selected: %s_\n' "$MODEL_REASON"
+          } >> "$out"
+
+          if [ -n "$APPEND" ]; then
+            {
+              printf '\n\n---\n\n## Additional instructions from caller\n\n'
+              printf '%s\n' "$APPEND"
+            } >> "$out"
+          fi
+
+          echo "file=$out" >> "$GITHUB_OUTPUT"
+
+      - name: Run Claude review
+        uses: anthropics/claude-code-action@v1
+        timeout-minutes: 15
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          prompt: |
+            Read and follow the instructions in the file `.claude-review-prompt.md`
+            at the repository root to review this pull request.
+          claude_args: "--model ${{ steps.model.outputs.model }}"
