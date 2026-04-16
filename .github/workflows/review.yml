@@ -223,6 +223,9 @@ jobs:
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # track_progress posts a sticky progress comment on the PR, adds the 👀 reaction,
+          # and publishes the final review. Without it, the agent runs silently — no PR output.
+          track_progress: "true"
           prompt: |
             Read and follow the instructions in the file `.claude-review-prompt.md`
             at the repository root to review this pull request.
