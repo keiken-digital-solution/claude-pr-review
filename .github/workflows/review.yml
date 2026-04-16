@@ -60,7 +60,11 @@ on:
         default: "main"
     secrets:
       ANTHROPIC_API_KEY:
-        required: true
+        description: "Anthropic API key. Either this or CLAUDE_CODE_OAUTH_TOKEN is required."
+        required: false
+      CLAUDE_CODE_OAUTH_TOKEN:
+        description: "Claude Code OAuth token (for Claude subscription auth). Either this or ANTHROPIC_API_KEY is required."
+        required: false
 
 concurrency:
   group: claude-review-${{ github.event.pull_request.number }}
@@ -95,6 +99,8 @@ jobs:
         env:
           PROMPT_TYPE: ${{ inputs.prompt-type }}
           CUSTOM_PATH: ${{ inputs.custom-prompt-path }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
         run: |
           set -euo pipefail
 
@@ -110,6 +116,11 @@ jobs:
 
           if [ -z "$CUSTOM_PATH" ] && [ "$PROMPT_TYPE" != "codebase-review" ] && [ "$PROMPT_TYPE" != "infra-review" ]; then
             echo "::error::prompt-type must be 'codebase-review' or 'infra-review' (got '$PROMPT_TYPE')."
+            exit 1
+          fi
+
+          if [ -z "${ANTHROPIC_API_KEY:-}" ] && [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+            echo "::error::Provide either 'ANTHROPIC_API_KEY' or 'CLAUDE_CODE_OAUTH_TOKEN' as a secret in the caller workflow."
             exit 1
           fi
 
@@ -210,6 +221,7 @@ jobs:
         timeout-minutes: 15
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           prompt: |
             Read and follow the instructions in the file `.claude-review-prompt.md`
             at the repository root to review this pull request.

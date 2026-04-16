@@ -33,9 +33,16 @@ jobs:
       shared-repo: YOUR-ORG/claude-pr-review
     secrets:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      # OR, if you use Claude subscription auth:
+      # CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
-Add the `ANTHROPIC_API_KEY` secret in the consumer repository's Settings → Secrets and variables → Actions.
+Add **one** of the following secrets in the consumer repository's Settings → Secrets and variables → Actions:
+
+- `ANTHROPIC_API_KEY` — an Anthropic API key.
+- `CLAUDE_CODE_OAUTH_TOKEN` — a Claude Code OAuth token (if your org uses Claude subscription auth rather than direct API billing).
+
+The secret name you set is the same name you reference in `secrets:` when calling the reusable workflow (see examples below).
 
 ## Inputs
 
@@ -55,9 +62,12 @@ Add the `ANTHROPIC_API_KEY` secret in the consumer repository's Settings → Sec
 
 ### Secrets
 
-| Secret | Required | Description |
-|---|---|---|
-| `ANTHROPIC_API_KEY` | yes | Anthropic API key used by the Claude action. |
+At least one of the following must be provided:
+
+| Secret | Description |
+|---|---|
+| `ANTHROPIC_API_KEY` | Anthropic API key. |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (Claude subscription auth). |
 
 ## Model resolution
 
@@ -169,7 +179,7 @@ jobs:
         - Any new S3 bucket must have `force_destroy = false` and a lifecycle policy.
         - Production changes require a reference to a change ticket in the PR description.
     secrets:
-      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      CLAUDE_CODE_OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
 ```
 
 ## Versioning
@@ -201,7 +211,7 @@ No extra setup needed on the consumer side; this is native behavior of `anthropi
 
 ## Troubleshooting
 
-**`ANTHROPIC_API_KEY` missing** — add it under Settings → Secrets and variables → Actions in the consumer repository.
+**No authentication provided** — add either `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` under Settings → Secrets and variables → Actions in the consumer repository, and reference it in the `secrets:` block of the caller workflow.
 
 **`custom-prompt-path 'X' was not found`** — the path is resolved relative to the root of the consumer repository. Make sure the file is committed on the PR branch.
 
